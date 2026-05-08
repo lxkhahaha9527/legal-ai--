@@ -37,7 +37,7 @@ class LegalRetriever:
         try:
             from langchain_community.embeddings import DashScopeEmbeddings
             self.embeddings = DashScopeEmbeddings(
-                model="text-embedding-v2",
+                model="text-embedding-v3",
                 dashscope_api_key=api_key
             )
         except ImportError:
