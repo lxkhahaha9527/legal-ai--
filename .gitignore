@@ -1,0 +1,35 @@
+# 敏感数据（永远不要提交到 Git）
+memory/users.json
+memory/settings.json
+memory/users/
+memory/conversations/
+
+# API Keys 和密钥
+.env
+.env.local
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.json
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
