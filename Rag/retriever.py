@@ -52,7 +52,7 @@ class LegalRetriever:
         docs_dir: str = None,
         regenerate: bool = False
     ) -> bool:
-        """构建向量索引"""
+        """构建向量索引 - 自动检测环境，Streamlit Cloud用内存模式，本地用持久化"""
         if self.embeddings is None:
             return False
             
@@ -67,12 +67,50 @@ class LegalRetriever:
         if not documents:
             return False
         
-        # 创建向量存储
+        # 检测是否在 Streamlit Cloud 环境
+        if self._is_streamlit_cloud():
+            # Streamlit Cloud: 使用纯内存模式
+            return self._build_index_memory(documents, regenerate)
+        else:
+            # 本地环境: 使用持久化模式
+            return self._build_index_persistent(documents, regenerate)
+    
+    def _is_streamlit_cloud(self) -> bool:
+        """检测是否在 Streamlit Cloud 环境"""
+        import os
+        return bool(os.environ.get("STREAMLIT_SHARING") or os.environ.get("STREAMLIT_CLOUD"))
+    
+    def _build_index_memory(self, documents: List[Document], regenerate: bool) -> bool:
+        """内存模式构建索引（Streamlit Cloud）"""
+        if regenerate:
+            self._delete_collection_memory()
+        
+        try:
+            client = chromadb.EphemeralClient()
+            
+            # 清理旧集合
+            try:
+                client.delete_collection(name=self.collection_name)
+            except Exception:
+                pass
+            
+            self.vectorstore = Chroma.from_documents(
+                documents=documents,
+                embedding=self.embeddings,
+                collection_name=self.collection_name,
+                client=client
+            )
+            return True
+        except Exception as e:
+            raise RuntimeError(f"索引构建失败: {e}")
+    
+    def _build_index_persistent(self, documents: List[Document], regenerate: bool) -> bool:
+        """持久化模式构建索引（本地环境）"""
         persist_dir = self._get_persist_dir()
         persist_dir.mkdir(parents=True, exist_ok=True)
         
         if regenerate:
-            self._delete_collection()
+            self._delete_collection_persistent()
         
         try:
             self.vectorstore = Chroma.from_documents(
@@ -81,9 +119,6 @@ class LegalRetriever:
                 collection_name=self.collection_name,
                 persist_directory=str(persist_dir)
             )
-            
-            # 持久化到磁盘
-            self.vectorstore.persist()
             return True
         except Exception as e:
             raise RuntimeError(f"索引构建失败: {e}")
@@ -141,7 +176,10 @@ class LegalRetriever:
         return base / self.user_id
     
     def _load_index(self) -> bool:
-        """加载已有索引"""
+        """加载已有索引 - Streamlit Cloud内存模式下返回False"""
+        if self._is_streamlit_cloud():
+            return False
+        
         persist_dir = self._get_persist_dir()
         
         if not persist_dir.exists():
@@ -161,17 +199,54 @@ class LegalRetriever:
             return False
     
     def _delete_collection(self) -> None:
-        """删除向量集合"""
-        try:
-            client = chromadb.PersistentClient(path=str(self._get_persist_dir().parent))
-            client.delete_collection(name=self.collection_name)
-        except:
-            pass
+        """删除向量集合 - 根据环境选择删除方式"""
+        if self._is_streamlit_cloud():
+            self._delete_collection_memory()
+        else:
+            self._delete_collection_persistent()
+    
+    def _delete_collection_memory(self) -> None:
+        """内存模式删除集合"""
+        self.vectorstore = None
+    
+    def _delete_collection_persistent(self) -> None:
+        """持久化模式删除集合"""
+        import shutil
+        import time
         
         persist_dir = self._get_persist_dir()
+        parent_dir = persist_dir.parent
+        
+        # 先尝试通过 ChromaDB 客户端删除集合
+        try:
+            client = chromadb.PersistentClient(path=str(parent_dir))
+            try:
+                client.delete_collection(name=self.collection_name)
+            except Exception:
+                pass
+            # 给 ChromaDB 一点时间释放文件句柄
+            time.sleep(0.5)
+        except Exception:
+            pass
+        
+        # 然后删除目录，带重试机制
         if persist_dir.exists():
-            import shutil
-            shutil.rmtree(persist_dir)
+            max_retries = 3
+            for i in range(max_retries):
+                try:
+                    shutil.rmtree(persist_dir)
+                    break
+                except PermissionError:
+                    if i < max_retries - 1:
+                        time.sleep(1)
+                    else:
+                        # 最后尝试：重命名后删除
+                        try:
+                            import tempfile
+                            temp_name = parent_dir / f"deleted_{self.user_id}_{int(time.time())}"
+                            persist_dir.rename(temp_name)
+                        except Exception:
+                            pass
     
     def get_document_count(self) -> int:
         """获取索引文档数量"""
