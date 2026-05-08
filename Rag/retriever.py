@@ -37,14 +37,14 @@ class LegalRetriever:
         try:
             from langchain_community.embeddings import DashScopeEmbeddings
             self.embeddings = DashScopeEmbeddings(
-                model="text-embedding-v3",
+                model="text-embedding-v4",
                 dashscope_api_key=api_key
             )
         except ImportError:
             raise
         except Exception as e:
             raise RuntimeError(f"加载 DashScope 嵌入模型失败: {e}")
-            raise
+            
     
     def build_index(
         self,
@@ -81,14 +81,18 @@ class LegalRetriever:
         return bool(os.environ.get("STREAMLIT_SHARING") or os.environ.get("STREAMLIT_CLOUD"))
     
     def _build_index_memory(self, documents: List[Document], regenerate: bool) -> bool:
-        """内存模式构建索引（Streamlit Cloud）"""
+        """内存模式构建索引（Streamlit Cloud）- 使用duckdb+parquet纯内存模式"""
         if regenerate:
             self._delete_collection_memory()
         
         try:
-            client = chromadb.EphemeralClient()
+            # 使用duckdb+parquet内存模式，不持久化到磁盘
+            client = chromadb.Client(Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory=None  # 不持久化
+            ))
             
-            # 清理旧集合
+            # 清理旧集合（如果存在）
             try:
                 client.delete_collection(name=self.collection_name)
             except Exception:
